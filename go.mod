@@ -1,4 +1,4 @@
-module github.com/yourusername/llm-request-tracer
+module github.com/propel-gtm/llm-request-tracer
 
 go 1.24.3
 
