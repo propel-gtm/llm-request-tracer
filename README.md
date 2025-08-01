@@ -33,7 +33,7 @@ stats, _ := client.GetTokenStats(context.Background(), nil)
 ## Installation
 
 ```bash
-go get github.com/yourusername/llm-request-tracer
+go get github.com/propel-gtm/llm-request-tracer
 ```
 
 ## Usage
@@ -49,8 +49,8 @@ import (
     "gorm.io/driver/sqlite"
     "gorm.io/gorm"
     
-    llmtracer "github.com/yourusername/llm-request-tracer"
-    "github.com/yourusername/llm-request-tracer/adapters"
+    llmtracer "github.com/propel-gtm/llm-request-tracer"
+    "github.com/propel-gtm/llm-request-tracer/adapters"
 )
 
 func main() {

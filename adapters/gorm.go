@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	llmtracer "github.com/yourusername/llm-request-tracer"
+	llmtracer "github.com/propel-gtm/llm-request-tracer"
 )
 
 type GormAdapter struct {
