@@ -1,33 +1,34 @@
 # LLM Request Tracer
 
-A Go library for tracking requests to AI providers like OpenAI, Anthropic, Google, and others. Track token usage, costs, latency, and custom dimensions with pluggable storage adapters.
+Simple Go library that wraps AI provider clients (OpenAI, Anthropic, Mistral, Google) and automatically tracks token usage in the background.
 
-## 🎯 Quick Start - Simple Token Tracking
-
-Just want to track tokens? Here's the simplest way:
+## 🎯 Quick Start
 
 ```go
 // Setup once
 db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
 storage, _ := adapters.NewGormAdapter(db)
-tracker := llmtracer.NewTokenTracker(storage)
+client := llmtracer.NewClient(storage)
 
-// Track tokens with one line after any LLM call
-tracker.Track(llmtracer.ProviderOpenAI, "gpt-4", inputTokens, outputTokens)
+// Configure API keys
+client.SetOpenAIKey("your-key")
+client.SetAnthropicKey("your-key")
 
-// Get stats
-stats, _ := tracker.GetTokenStats(context.Background(), nil)
+// Make calls - token tracking happens automatically!
+response, _ := client.CallOpenAI("gpt-4", "You are helpful.", "Hello!", nil)
+response, _ := client.CallAnthropic("claude-3-haiku", "You are helpful.", "Hi!", nil)
+
+// Get token stats
+stats, _ := client.GetTokenStats(context.Background(), nil)
 ```
 
 ## Features
 
-- **Multi-provider support**: OpenAI, Anthropic, Google, AWS, and custom providers
-- **Comprehensive tracking**: Input/output tokens, costs, latency, status codes, errors
-- **Custom dimensions**: Add your own metadata for filtering and aggregation
-- **Trace correlation**: Group related requests with trace IDs
-- **Pluggable storage**: Interface-based storage with GORM adapter included
-- **Aggregation queries**: Get usage statistics by provider, model, time period, etc.
-- **Cleanup utilities**: Remove old requests to manage storage
+- **Simple unified interface**: Just `CallOpenAI`, `CallAnthropic`, `CallMistral`, `CallGoogle`
+- **Automatic token tracking**: No manual tracking needed
+- **Built-in clients**: Uses official SDKs under the hood
+- **Flexible storage**: SQLite, PostgreSQL, MySQL via GORM
+- **Optional tracking context**: Add user IDs, features, or any metadata
 
 ## Installation
 
@@ -35,14 +36,15 @@ stats, _ := tracker.GetTokenStats(context.Background(), nil)
 go get github.com/yourusername/llm-request-tracer
 ```
 
-## Quick Start
+## Usage
+
+### Basic Usage
 
 ```go
 package main
 
 import (
-    "context"
-    "time"
+    "log"
     
     "gorm.io/driver/sqlite"
     "gorm.io/gorm"
@@ -52,202 +54,126 @@ import (
 )
 
 func main() {
-    // Setup database and storage adapter
-    db, _ := gorm.Open(sqlite.Open("requests.db"), &gorm.Config{})
+    // Setup storage
+    db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
     storage, _ := adapters.NewGormAdapter(db)
-    tracker := llmtracer.NewTracker(storage)
-    defer tracker.Close()
     
-    ctx := context.Background()
+    // Create client
+    client := llmtracer.NewClient(storage)
+    defer client.Close()
     
-    // Track a request
-    err := tracker.TrackRequest(ctx, llmtracer.RequestOptions{
-        TraceID:  "trace-123",
-        Provider: llmtracer.ProviderOpenAI,
-        Model:    "gpt-4",
-        Dimensions: map[string]interface{}{
-            "user_id": "user-456",
-            "endpoint": "/chat/completions",
-        },
-    }, 100, 150, 0.002, 1200*time.Millisecond, 200, nil)
+    // Configure providers
+    client.SetOpenAIKey("your-openai-key")
+    client.SetAnthropicKey("your-anthropic-key")
+    
+    // Make calls
+    response, err := client.CallOpenAI(
+        "gpt-3.5-turbo",
+        "You are a helpful assistant.",
+        "What is the capital of France?",
+        nil, // optional tracking context
+    )
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Println(response)
 }
 ```
 
-## Usage Patterns
-
-### 1. Manual Request Tracking
+### With Tracking Context
 
 ```go
-// Track completed request with all details
-err := tracker.TrackRequest(ctx, llmtracer.RequestOptions{
-    TraceID:  "trace-abc",
-    Provider: llmtracer.ProviderAnthropic,
-    Model:    "claude-3-sonnet",
-    Dimensions: map[string]interface{}{
+// Add metadata for better tracking
+response, err := client.CallOpenAI(
+    "gpt-4",
+    systemMessage,
+    userMessage,
+    map[string]interface{}{
         "user_id": "user-123",
         "feature": "chat",
+        "session": "sess-456",
     },
-}, inputTokens, outputTokens, cost, latency, statusCode, err)
+)
 ```
 
-### 2. Timed Request Tracking
+### Integration with Existing Code
 
 ```go
-// Start timing a request
-tracked := tracker.StartRequest("trace-xyz", llmtracer.ProviderOpenAI, "gpt-4")
-
-// ... make your API call ...
-
-// Finish with results (latency calculated automatically)
-err := tracked.FinishWithDimensions(ctx, inputTokens, outputTokens, cost, statusCode, 
-    map[string]interface{}{
-        "user_id": "user-456",
-    }, apiErr)
-```
-
-### 3. Querying Requests
-
-```go
-// Query with filters
-filter := &llmtracer.RequestFilter{
-    Provider:  llmtracer.ProviderOpenAI,
-    StartTime: &startTime,
-    EndTime:   &endTime,
-    Dimensions: map[string]interface{}{
-        "user_id": "user-123",
-    },
-    Limit: 100,
+type YourService struct {
+    aiClient *llmtracer.Client
 }
 
-requests, err := tracker.QueryRequests(ctx, filter)
+func (s *YourService) ProcessUserRequest(userID, message string) (string, error) {
+    // Your existing logic...
+    
+    // Just replace your OpenAI call with this:
+    return s.aiClient.CallOpenAI(
+        "gpt-4",
+        "You are a helpful assistant.",
+        message,
+        map[string]interface{}{"user_id": userID},
+    )
+}
 ```
 
-### 4. Getting Aggregates
+## Supported Providers
+
+- **OpenAI**: GPT-4, GPT-3.5-turbo, etc.
+- **Anthropic**: Claude 3 Opus, Sonnet, Haiku
+- **Mistral**: Mistral Large, Medium, Small
+- **Google**: Gemini Pro, Gemini Pro Vision
+
+## Token Statistics
 
 ```go
-// Get usage stats by provider and model
-aggregates, err := tracker.GetAggregates(ctx, []string{"provider", "model"}, filter)
+// Get usage stats
+stats, err := client.GetTokenStats(context.Background(), nil)
 
-for _, agg := range aggregates {
-    fmt.Printf("%s/%s: %d requests, %d tokens, $%.4f cost\n",
-        agg.Provider, agg.Model, agg.TotalRequests, agg.TotalTokens, agg.TotalCost)
-}
+// Get stats since a specific time
+since := time.Now().Add(-24 * time.Hour)
+stats, err := client.GetTokenStats(context.Background(), &since)
+
+// Stats include:
+// - Total requests per model
+// - Input/output/total tokens
+// - Error counts
 ```
 
 ## Storage Adapters
 
-### GORM Adapter
+The library uses GORM for storage, supporting:
 
-Supports SQLite, PostgreSQL, MySQL, and other GORM-compatible databases:
+- SQLite (great for development/small apps)
+- PostgreSQL (recommended for production)
+- MySQL/MariaDB
 
 ```go
 // SQLite
-db, _ := gorm.Open(sqlite.Open("requests.db"), &gorm.Config{})
+db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
 
-// PostgreSQL  
+// PostgreSQL
 db, _ := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 
 // MySQL
 db, _ := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-
-storage, _ := adapters.NewGormAdapter(db)
-```
-
-### Custom Adapters
-
-Implement the `StorageAdapter` interface:
-
-```go
-type StorageAdapter interface {
-    Save(ctx context.Context, request *Request) error
-    Get(ctx context.Context, id string) (*Request, error)
-    GetByTraceID(ctx context.Context, traceID string) ([]*Request, error)
-    Query(ctx context.Context, filter *RequestFilter) ([]*Request, error)
-    Aggregate(ctx context.Context, groupBy []string, filter *RequestFilter) ([]*AggregateResult, error)
-    Delete(ctx context.Context, id string) error
-    DeleteOlderThan(ctx context.Context, before time.Time) (int64, error)
-    Close() error
-}
-```
-
-## Data Model
-
-### Request
-
-```go
-type Request struct {
-    ID             string                 // Unique request ID
-    TraceID        string                 // Correlation ID for related requests  
-    Provider       Provider               // AI provider (openai, anthropic, etc.)
-    Model          string                 // Model name (gpt-4, claude-3-sonnet, etc.)
-    InputTokens    int                    // Input token count
-    OutputTokens   int                    // Output token count  
-    TotalTokens    int                    // Total token count
-    Cost           float64                // Request cost in USD
-    Latency        time.Duration          // Request duration
-    StatusCode     int                    // HTTP status code
-    Error          string                 // Error message if failed
-    Dimensions     map[string]interface{} // Custom metadata
-    Metadata       map[string]interface{} // Additional metadata
-    RequestedAt    time.Time              // Request start time
-    RespondedAt    time.Time              // Request end time
-    CreatedAt      time.Time              // Record creation time
-    UpdatedAt      time.Time              // Record update time
-}
-```
-
-### Providers
-
-```go
-const (
-    ProviderOpenAI    Provider = "openai"
-    ProviderAnthropic Provider = "anthropic"  
-    ProviderGoogle    Provider = "google"
-    ProviderAWS       Provider = "aws"
-    ProviderCustom    Provider = "custom"
-)
 ```
 
 ## Testing
 
-### Run all tests
 ```bash
+# Run all tests
 go test ./...
-```
 
-### Run tests with verbose output
-```bash
+# Run with verbose output
 go test -v ./...
-```
 
-### Run tests with coverage
-```bash
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out -o coverage.html
-```
-
-### Run tests with race detector
-```bash
+# Run with race detector
 go test -race ./...
-```
 
-### Run specific package tests
-```bash
-# Test adapters only
-go test -v ./adapters/...
-
-# Test core functionality
-go test -v .
-```
-
-### Format code
-```bash
-go fmt ./...
-```
-
-### Check and tidy dependencies
-```bash
-go mod tidy
+# Run specific tests
+go test -v -run TestClient ./...
 ```
 
 ## License
