@@ -1,5 +1,25 @@
 # Simple Usage Guide
 
+## 🎯 Super Simple Token Tracking (No Cost Calculation)
+
+If you just want to track tokens without cost calculation, use the `TokenTracker`:
+
+```go
+// Setup once
+db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
+storage, _ := adapters.NewGormAdapter(db)
+tracker := llmtracer.NewTokenTracker(storage)
+
+// Track tokens with one line
+tracker.Track(llmtracer.ProviderOpenAI, "gpt-4", inputTokens, outputTokens)
+
+// Get token stats
+stats, _ := tracker.GetTokenStats(context.Background(), nil)
+for model, s := range stats {
+    fmt.Printf("%s: %d requests, %d total tokens\n", model, s.TotalRequests, s.TotalTokens)
+}
+```
+
 ## 🚀 Super Easy Integration
 
 ### Option 1: Automatic Tracking (Recommended)

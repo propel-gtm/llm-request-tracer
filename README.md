@@ -2,6 +2,23 @@
 
 A Go library for tracking requests to AI providers like OpenAI, Anthropic, Google, and others. Track token usage, costs, latency, and custom dimensions with pluggable storage adapters.
 
+## 🎯 Quick Start - Simple Token Tracking
+
+Just want to track tokens? Here's the simplest way:
+
+```go
+// Setup once
+db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
+storage, _ := adapters.NewGormAdapter(db)
+tracker := llmtracer.NewTokenTracker(storage)
+
+// Track tokens with one line after any LLM call
+tracker.Track(llmtracer.ProviderOpenAI, "gpt-4", inputTokens, outputTokens)
+
+// Get stats
+stats, _ := tracker.GetTokenStats(context.Background(), nil)
+```
+
 ## Features
 
 - **Multi-provider support**: OpenAI, Anthropic, Google, AWS, and custom providers
@@ -189,6 +206,48 @@ const (
     ProviderAWS       Provider = "aws"
     ProviderCustom    Provider = "custom"
 )
+```
+
+## Testing
+
+### Run all tests
+```bash
+go test ./...
+```
+
+### Run tests with verbose output
+```bash
+go test -v ./...
+```
+
+### Run tests with coverage
+```bash
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+```
+
+### Run tests with race detector
+```bash
+go test -race ./...
+```
+
+### Run specific package tests
+```bash
+# Test adapters only
+go test -v ./adapters/...
+
+# Test core functionality
+go test -v .
+```
+
+### Format code
+```bash
+go fmt ./...
+```
+
+### Check and tidy dependencies
+```bash
+go mod tidy
 ```
 
 ## License

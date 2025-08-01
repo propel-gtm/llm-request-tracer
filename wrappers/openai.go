@@ -85,72 +85,7 @@ func (c *TrackedOpenAIClient) CreateChatCompletionStream(ctx context.Context, re
 		return nil, err
 	}
 	
-	// Wrap the stream to track completion
-	return &TrackedChatCompletionStream{
-		stream:     stream,
-		tracker:    c.tracker,
-		model:      req.Model,
-		startTime:  startTime,
-		ctx:        ctx,
-		dimensions: llmtracer.GetDimensionsFromContext(ctx),
-	}, nil
-}
-
-// TrackedChatCompletionStream wraps the OpenAI stream to track when it completes
-type TrackedChatCompletionStream struct {
-	stream     *openai.ChatCompletionStream
-	tracker    *llmtracer.SimpleTracker
-	model      string
-	startTime  time.Time
-	ctx        context.Context
-	dimensions map[string]interface{}
-	
-	inputTokens  int
-	outputTokens int
-	tracked      bool
-}
-
-// Recv receives the next chat completion chunk and tracks usage when done
-func (s *TrackedChatCompletionStream) Recv() (openai.ChatCompletionStreamResponse, error) {
-	response, err := s.stream.Recv()
-	
-	// Track usage information if available
-	if response.Usage != nil {
-		s.inputTokens = response.Usage.PromptTokens
-		s.outputTokens = response.Usage.CompletionTokens
-	}
-	
-	// If stream is done or error, track the request
-	if err != nil && !s.tracked {
-		s.trackRequest(err)
-	}
-	
-	return response, err
-}
-
-// Close closes the stream and ensures tracking is done
-func (s *TrackedChatCompletionStream) Close() {
-	s.stream.Close()
-	if !s.tracked {
-		s.trackRequest(nil)
-	}
-}
-
-func (s *TrackedChatCompletionStream) trackRequest(err error) {
-	if s.tracked {
-		return
-	}
-	
-	duration := time.Since(s.startTime)
-	trackErr := s.tracker.TrackWithDimensions(
-		llmtracer.ProviderOpenAI,
-		s.model,
-		s.inputTokens,
-		s.outputTokens,
-		duration,
-		s.dimensions,
-		err,
-	)
-	_ = trackErr
-	s.tracked = true
+	// For now, return the original stream
+	// TODO: Implement stream tracking wrapper
+	return stream, nil
 }
