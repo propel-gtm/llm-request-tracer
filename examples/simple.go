@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"log"
 
+	llmtracer "github.com/propel-gtm/llm-request-tracer"
+	"github.com/propel-gtm/llm-request-tracer/adapters"
 	"github.com/sashabaranov/go-openai"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-
-	llmtracer "github.com/propel-gtm/llm-request-tracer"
-	"github.com/propel-gtm/llm-request-tracer/adapters"
 )
 
 func main() {
@@ -30,8 +29,7 @@ func main() {
 	defer client.Close()
 
 	// Configure your API keys
-	client.SetOpenAIKey("your-openai-key")
-	// Note: Other providers will be implemented later
+	client.SetOpenAIKey("api-key")
 
 	// Example 1: Call OpenAI with automatic tracking
 	ctx := context.Background()

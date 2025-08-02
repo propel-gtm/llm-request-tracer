@@ -88,7 +88,7 @@ func (c *Client) trackRequest(ctx context.Context, provider Provider, model stri
 			Value: fmt.Sprintf("%v", value),
 		})
 	}
-	
+
 	request := &Request{
 		ID:           uuid.New().String(),
 		TraceID:      GetTraceIDFromContext(ctx),

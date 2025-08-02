@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	llmtracer "github.com/propel-gtm/llm-request-tracer"
+	"gorm.io/gorm"
 )
 
 type GormAdapter struct {
@@ -50,10 +49,10 @@ func (a *GormAdapter) Save(ctx context.Context, request *llmtracer.Request) erro
 				processedDimensions = append(processedDimensions, existingTag)
 			}
 		}
-		
+
 		// Replace dimensions with processed ones (with IDs)
 		request.Dimensions = processedDimensions
-		
+
 		// Save the request with associations
 		return tx.Create(request).Error
 	})
