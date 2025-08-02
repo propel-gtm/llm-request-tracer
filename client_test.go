@@ -52,19 +52,25 @@ func TestClient(t *testing.T) {
 		if req.OutputTokens != 50 {
 			t.Errorf("Expected 50 output tokens, got %d", req.OutputTokens)
 		}
-		if req.TotalTokens != 150 {
-			t.Errorf("Expected 150 total tokens, got %d", req.TotalTokens)
+
+		// Check tracking context - need to check DimensionTag slice
+		hasDimension := func(dims []DimensionTag, key, value string) bool {
+			for _, dim := range dims {
+				if dim.Key == key && dim.Value == value {
+					return true
+				}
+			}
+			return false
 		}
 
-		// Check tracking context
-		if req.Dimensions["user_id"] != "test-user" {
-			t.Errorf("Expected user_id test-user, got %v", req.Dimensions["user_id"])
+		if !hasDimension(req.Dimensions, "user_id", "test-user") {
+			t.Errorf("Expected dimension user_id=test-user not found")
 		}
-		if req.Dimensions["feature"] != "test-feature" {
-			t.Errorf("Expected feature test-feature, got %v", req.Dimensions["feature"])
+		if !hasDimension(req.Dimensions, "feature", "test-feature") {
+			t.Errorf("Expected dimension feature=test-feature not found")
 		}
-		if req.Dimensions["custom"] != "value" {
-			t.Errorf("Expected custom value, got %v", req.Dimensions["custom"])
+		if !hasDimension(req.Dimensions, "custom", "value") {
+			t.Errorf("Expected dimension custom=value not found")
 		}
 	})
 
@@ -92,9 +98,6 @@ func TestClient(t *testing.T) {
 			}
 			if gpt4Stats.OutputTokens != 250 { // 50 + 200
 				t.Errorf("Expected 250 output tokens for gpt-4, got %d", gpt4Stats.OutputTokens)
-			}
-			if gpt4Stats.TotalTokens != 500 {
-				t.Errorf("Expected 500 total tokens for gpt-4, got %d", gpt4Stats.TotalTokens)
 			}
 		}
 

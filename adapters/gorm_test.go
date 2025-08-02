@@ -33,12 +33,10 @@ func TestGormAdapter(t *testing.T) {
 			Model:        "gpt-4",
 			InputTokens:  100,
 			OutputTokens: 150,
-			TotalTokens:  250,
-			Cost:         0.002,
 			Latency:      1000 * time.Millisecond,
 			StatusCode:   200,
-			Dimensions: map[string]interface{}{
-				"user_id": "test-user",
+			Dimensions: []llmtracer.DimensionTag{
+				{Key: "user_id", Value: "test-user"},
 			},
 			RequestedAt: time.Now().Add(-1000 * time.Millisecond),
 			RespondedAt: time.Now(),

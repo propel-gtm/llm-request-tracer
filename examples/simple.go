@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/sashabaranov/go-openai"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -32,36 +33,39 @@ func main() {
 	client.SetOpenAIKey("your-openai-key")
 	// Note: Other providers will be implemented later
 
-	// Example 1: Call OpenAI - it's just one line!
-	response, err := client.CallOpenAI(
-		"gpt-3.5-turbo",
-		"You are a helpful assistant.",
-		"What is the capital of France?",
-		map[string]interface{}{
-			"user_id": "user-123",
-			"feature": "geography-quiz",
+	// Example 1: Call OpenAI with automatic tracking
+	ctx := context.Background()
+	ctx = llmtracer.WithUserID(ctx, "user-123")
+	ctx = llmtracer.WithFeature(ctx, "geography-quiz")
+
+	response, err := client.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
+		Model: "gpt-3.5-turbo",
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant."},
+			{Role: openai.ChatMessageRoleUser, Content: "What is the capital of France?"},
 		},
-	)
+	})
 	if err != nil {
 		log.Printf("OpenAI error: %v", err)
-	} else {
-		fmt.Printf("OpenAI Response: %s\n", response)
+	} else if len(response.Choices) > 0 {
+		fmt.Printf("OpenAI Response: %s\n", response.Choices[0].Message.Content)
 	}
 
 	// Example 2: Another OpenAI call with different context
-	response, err = client.CallOpenAI(
-		"gpt-4",
-		"You are a helpful assistant.",
-		"What is 2+2?",
-		map[string]interface{}{
-			"user_id": "user-123",
-			"feature": "math-help",
+	ctx = llmtracer.WithUserID(context.Background(), "user-123")
+	ctx = llmtracer.WithFeature(ctx, "math-help")
+
+	response, err = client.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
+		Model: "gpt-4",
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant."},
+			{Role: openai.ChatMessageRoleUser, Content: "What is 2+2?"},
 		},
-	)
+	})
 	if err != nil {
 		log.Printf("OpenAI error: %v", err)
-	} else {
-		fmt.Printf("OpenAI Response: %s\n", response)
+	} else if len(response.Choices) > 0 {
+		fmt.Printf("OpenAI Response: %s\n", response.Choices[0].Message.Content)
 	}
 
 	// Get token usage statistics
@@ -77,7 +81,6 @@ func main() {
 		fmt.Printf("  Total Requests: %d\n", stat.TotalRequests)
 		fmt.Printf("  Input Tokens: %d\n", stat.InputTokens)
 		fmt.Printf("  Output Tokens: %d\n", stat.OutputTokens)
-		fmt.Printf("  Total Tokens: %d\n", stat.TotalTokens)
 		if stat.ErrorCount > 0 {
 			fmt.Printf("  Errors: %d\n", stat.ErrorCount)
 		}
@@ -91,15 +94,30 @@ type YourAIService struct {
 }
 
 func (s *YourAIService) ProcessRequest(userID, message string) (string, error) {
-	// Just call the appropriate method - tracking happens automatically!
-	return s.client.CallOpenAI(
-		"gpt-4",
-		"You are a helpful assistant for our application.",
-		message,
-		map[string]interface{}{
-			"user_id":  userID,
-			"endpoint": "/api/chat",
-			"version":  "v1",
+	// Create context with tracking dimensions
+	ctx := context.Background()
+	ctx = llmtracer.WithUserID(ctx, userID)
+	ctx = llmtracer.WithDimensions(ctx, map[string]interface{}{
+		"endpoint": "/api/chat",
+		"version":  "v1",
+	})
+
+	// Just call the wrapped method - tracking happens automatically!
+	response, err := s.client.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
+		Model: "gpt-4",
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant for our application."},
+			{Role: openai.ChatMessageRoleUser, Content: message},
 		},
-	)
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI")
+	}
+
+	return response.Choices[0].Message.Content, nil
 }

@@ -2,6 +2,7 @@ package llmtracer
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +23,18 @@ type RequestOptions struct {
 	Provider   Provider
 	Model      string
 	Dimensions map[string]interface{}
-	Metadata   map[string]interface{}
 }
 
-func (t *Tracker) TrackRequest(ctx context.Context, opts RequestOptions, inputTokens, outputTokens int, cost float64, latency time.Duration, statusCode int, err error) error {
+func (t *Tracker) TrackRequest(ctx context.Context, opts RequestOptions, inputTokens, outputTokens int, latency time.Duration, statusCode int, err error) error {
+	// Convert map dimensions to DimensionTag slice
+	var dimensions []DimensionTag
+	for key, value := range opts.Dimensions {
+		dimensions = append(dimensions, DimensionTag{
+			Key:   key,
+			Value: fmt.Sprintf("%v", value),
+		})
+	}
+	
 	request := &Request{
 		ID:           uuid.New().String(),
 		TraceID:      opts.TraceID,
@@ -33,12 +42,9 @@ func (t *Tracker) TrackRequest(ctx context.Context, opts RequestOptions, inputTo
 		Model:        opts.Model,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
-		TotalTokens:  inputTokens + outputTokens,
-		Cost:         cost,
 		Latency:      latency,
 		StatusCode:   statusCode,
-		Dimensions:   opts.Dimensions,
-		Metadata:     opts.Metadata,
+		Dimensions:   dimensions,
 		RequestedAt:  time.Now().Add(-latency),
 		RespondedAt:  time.Now(),
 	}
@@ -96,21 +102,21 @@ func (t *Tracker) StartRequest(traceID string, provider Provider, model string) 
 	}
 }
 
-func (tr *TrackedRequest) Finish(ctx context.Context, inputTokens, outputTokens int, cost float64, statusCode int, err error) error {
+func (tr *TrackedRequest) Finish(ctx context.Context, inputTokens, outputTokens int, statusCode int, err error) error {
 	latency := time.Since(tr.startTime)
-	
+
 	opts := RequestOptions{
 		TraceID:  tr.traceID,
 		Provider: tr.provider,
 		Model:    tr.model,
 	}
 
-	return tr.tracker.TrackRequest(ctx, opts, inputTokens, outputTokens, cost, latency, statusCode, err)
+	return tr.tracker.TrackRequest(ctx, opts, inputTokens, outputTokens, latency, statusCode, err)
 }
 
-func (tr *TrackedRequest) FinishWithDimensions(ctx context.Context, inputTokens, outputTokens int, cost float64, statusCode int, dimensions map[string]interface{}, err error) error {
+func (tr *TrackedRequest) FinishWithDimensions(ctx context.Context, inputTokens, outputTokens int, statusCode int, dimensions map[string]interface{}, err error) error {
 	latency := time.Since(tr.startTime)
-	
+
 	opts := RequestOptions{
 		TraceID:    tr.traceID,
 		Provider:   tr.provider,
@@ -118,5 +124,5 @@ func (tr *TrackedRequest) FinishWithDimensions(ctx context.Context, inputTokens,
 		Dimensions: dimensions,
 	}
 
-	return tr.tracker.TrackRequest(ctx, opts, inputTokens, outputTokens, cost, latency, statusCode, err)
+	return tr.tracker.TrackRequest(ctx, opts, inputTokens, outputTokens, latency, statusCode, err)
 }

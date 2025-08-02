@@ -74,7 +74,7 @@ func TestTracker(t *testing.T) {
 			},
 		}
 
-		err := tracker.TrackRequest(ctx, opts, 100, 150, 0.002, 1*time.Second, 200, nil)
+		err := tracker.TrackRequest(ctx, opts, 100, 150, 1*time.Second, 200, nil)
 		if err != nil {
 			t.Errorf("Expected no error, got %v", err)
 		}
@@ -90,16 +90,13 @@ func TestTracker(t *testing.T) {
 		if req.InputTokens != 100 {
 			t.Errorf("Expected 100 input tokens, got %d", req.InputTokens)
 		}
-		if req.TotalTokens != 250 {
-			t.Errorf("Expected 250 total tokens, got %d", req.TotalTokens)
-		}
 	})
 
 	t.Run("StartRequest and Finish", func(t *testing.T) {
 		tracked := tracker.StartRequest("tracked-trace", ProviderAnthropic, "claude-3-sonnet")
 		time.Sleep(10 * time.Millisecond)
-		
-		err := tracked.Finish(ctx, 80, 120, 0.0015, 200, nil)
+
+		err := tracked.Finish(ctx, 80, 120, 200, nil)
 		if err != nil {
 			t.Errorf("Expected no error, got %v", err)
 		}
@@ -114,4 +111,3 @@ func TestTracker(t *testing.T) {
 		}
 	})
 }
-

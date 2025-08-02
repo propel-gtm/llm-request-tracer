@@ -30,50 +30,39 @@ func (c *Client) SetOpenAIKey(apiKey string) {
 	c.openAIClient = openai.NewClient(apiKey)
 }
 
-// CallOpenAI makes a call to OpenAI and automatically tracks token usage
-func (c *Client) CallOpenAI(model, systemMessage, userMessage string, trackingContext map[string]interface{}) (string, error) {
+// TraceOpenAIRequest wraps OpenAI's CreateChatCompletion and automatically tracks token usage
+func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
 	if c.openAIClient == nil {
-		return "", fmt.Errorf("OpenAI client not configured. Call SetOpenAIKey first")
+		return openai.ChatCompletionResponse{}, fmt.Errorf("OpenAI client not configured. Call SetOpenAIKey first")
 	}
 
-	ctx := context.Background()
 	startTime := time.Now()
 
-	resp, err := c.openAIClient.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-		Model: model,
-		Messages: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: systemMessage},
-			{Role: openai.ChatMessageRoleUser, Content: userMessage},
-		},
-		Temperature: 0,
-	})
+	// Make the actual OpenAI API call
+	response, err := c.openAIClient.CreateChatCompletion(ctx, request)
 
 	duration := time.Since(startTime)
 
 	// Track the request - even if it failed
 	inputTokens := 0
 	outputTokens := 0
-	if resp.Usage.PromptTokens > 0 || resp.Usage.CompletionTokens > 0 {
-		inputTokens = resp.Usage.PromptTokens
-		outputTokens = resp.Usage.CompletionTokens
+	if err == nil && response.Usage.PromptTokens > 0 || response.Usage.CompletionTokens > 0 {
+		inputTokens = response.Usage.PromptTokens
+		outputTokens = response.Usage.CompletionTokens
 	}
 
-	trackErr := c.trackRequest(ctx, ProviderOpenAI, model, 
+	// Extract tracking context from context if available
+	trackingContext := GetDimensionsFromContext(ctx)
+
+	trackErr := c.trackRequest(ctx, ProviderOpenAI, request.Model,
 		inputTokens, outputTokens, duration, err, trackingContext)
 	if trackErr != nil {
 		// Log but don't fail the request
 		fmt.Printf("Failed to track request: %v\n", trackErr)
 	}
 
-	if err != nil {
-		return "", err
-	}
-
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response from OpenAI")
-	}
-
-	return resp.Choices[0].Message.Content, nil
+	// Return the original response and error
+	return response, err
 }
 
 // Placeholder methods for other providers - can be implemented later
@@ -91,6 +80,15 @@ func (c *Client) CallGoogle(model, systemMessage, userMessage string, trackingCo
 
 // trackRequest internally tracks the token usage
 func (c *Client) trackRequest(ctx context.Context, provider Provider, model string, inputTokens, outputTokens int, duration time.Duration, err error, trackingContext map[string]interface{}) error {
+	// Convert map dimensions to DimensionTag slice
+	var dimensions []DimensionTag
+	for key, value := range trackingContext {
+		dimensions = append(dimensions, DimensionTag{
+			Key:   key,
+			Value: fmt.Sprintf("%v", value),
+		})
+	}
+	
 	request := &Request{
 		ID:           uuid.New().String(),
 		TraceID:      GetTraceIDFromContext(ctx),
@@ -98,11 +96,9 @@ func (c *Client) trackRequest(ctx context.Context, provider Provider, model stri
 		Model:        model,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
-		TotalTokens:  inputTokens + outputTokens,
-		Cost:         0, // No cost calculation as requested
 		Latency:      duration,
 		StatusCode:   200,
-		Dimensions:   trackingContext,
+		Dimensions:   dimensions,
 		RequestedAt:  time.Now().Add(-duration),
 		RespondedAt:  time.Now(),
 		CreatedAt:    time.Now(),
@@ -130,7 +126,7 @@ func (c *Client) GetTokenStats(ctx context.Context, since *time.Time) (map[strin
 	}
 
 	stats := make(map[string]*TokenStats)
-	
+
 	for _, req := range requests {
 		key := string(req.Provider) + "/" + req.Model
 		if _, exists := stats[key]; !exists {
@@ -139,13 +135,12 @@ func (c *Client) GetTokenStats(ctx context.Context, since *time.Time) (map[strin
 				Model:    req.Model,
 			}
 		}
-		
+
 		s := stats[key]
 		s.TotalRequests++
 		s.InputTokens += int64(req.InputTokens)
 		s.OutputTokens += int64(req.OutputTokens)
-		s.TotalTokens += int64(req.TotalTokens)
-		
+
 		if req.Error != "" {
 			s.ErrorCount++
 		}
@@ -161,7 +156,6 @@ type TokenStats struct {
 	TotalRequests int64    `json:"total_requests"`
 	InputTokens   int64    `json:"input_tokens"`
 	OutputTokens  int64    `json:"output_tokens"`
-	TotalTokens   int64    `json:"total_tokens"`
 	ErrorCount    int64    `json:"error_count"`
 }
 
