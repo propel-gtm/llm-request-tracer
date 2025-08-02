@@ -28,8 +28,8 @@ func main() {
 	client := llmtracer.NewClient(storage)
 	defer client.Close()
 
-	// Configure your API keys
-	client.SetOpenAIKey("api-key")
+	// Create your own OpenAI client
+	openaiClient := openai.NewClient("your-openai-api-key-here")
 
 	// Example 1: Call OpenAI with automatic tracking
 	ctx := context.Background()
@@ -42,7 +42,7 @@ func main() {
 			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant."},
 			{Role: openai.ChatMessageRoleUser, Content: "What is the capital of France?"},
 		},
-	})
+	}, openaiClient.CreateChatCompletion)
 	if err != nil {
 		log.Printf("OpenAI error: %v", err)
 	} else if len(response.Choices) > 0 {
@@ -59,7 +59,7 @@ func main() {
 			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant."},
 			{Role: openai.ChatMessageRoleUser, Content: "What is 2+2?"},
 		},
-	})
+	}, openaiClient.CreateChatCompletion)
 	if err != nil {
 		log.Printf("OpenAI error: %v", err)
 	} else if len(response.Choices) > 0 {
@@ -88,7 +88,15 @@ func main() {
 
 // Example of how to integrate with your existing code
 type YourAIService struct {
-	client *llmtracer.Client
+	tracer       *llmtracer.Client
+	openaiClient *openai.Client
+}
+
+func NewYourAIService(tracer *llmtracer.Client, openaiAPIKey string) *YourAIService {
+	return &YourAIService{
+		tracer:       tracer,
+		openaiClient: openai.NewClient(openaiAPIKey),
+	}
 }
 
 func (s *YourAIService) ProcessRequest(userID, message string) (string, error) {
@@ -100,14 +108,14 @@ func (s *YourAIService) ProcessRequest(userID, message string) (string, error) {
 		"version":  "v1",
 	})
 
-	// Just call the wrapped method - tracking happens automatically!
-	response, err := s.client.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
+	// Pass your OpenAI client's method directly to the tracer
+	response, err := s.tracer.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
 		Model: "gpt-4",
 		Messages: []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleSystem, Content: "You are a helpful assistant for our application."},
 			{Role: openai.ChatMessageRoleUser, Content: message},
 		},
-	})
+	}, s.openaiClient.CreateChatCompletion)
 
 	if err != nil {
 		return "", err

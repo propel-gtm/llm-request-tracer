@@ -11,9 +11,6 @@ import (
 
 // Client provides a unified interface for calling different AI providers with automatic token tracking
 type Client struct {
-	// API clients - starting with OpenAI only for now
-	openAIClient *openai.Client
-
 	// Internal tracking
 	storage StorageAdapter
 }
@@ -25,28 +22,22 @@ func NewClient(storage StorageAdapter) *Client {
 	}
 }
 
-// SetOpenAIKey configures the OpenAI client
-func (c *Client) SetOpenAIKey(apiKey string) {
-	c.openAIClient = openai.NewClient(apiKey)
-}
+// OpenAICreateChatCompletionFunc represents the signature of OpenAI's CreateChatCompletion method
+type OpenAICreateChatCompletionFunc func(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
 
 // TraceOpenAIRequest wraps OpenAI's CreateChatCompletion and automatically tracks token usage
-func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
-	if c.openAIClient == nil {
-		return openai.ChatCompletionResponse{}, fmt.Errorf("OpenAI client not configured. Call SetOpenAIKey first")
-	}
-
+func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatCompletionRequest, createChatCompletion OpenAICreateChatCompletionFunc) (openai.ChatCompletionResponse, error) {
 	startTime := time.Now()
 
-	// Make the actual OpenAI API call
-	response, err := c.openAIClient.CreateChatCompletion(ctx, request)
+	// Make the actual OpenAI API call using the provided function
+	response, err := createChatCompletion(ctx, request)
 
 	duration := time.Since(startTime)
 
 	// Track the request - even if it failed
 	inputTokens := 0
 	outputTokens := 0
-	if err == nil && response.Usage.PromptTokens > 0 || response.Usage.CompletionTokens > 0 {
+	if err == nil && (response.Usage.PromptTokens > 0 || response.Usage.CompletionTokens > 0) {
 		inputTokens = response.Usage.PromptTokens
 		outputTokens = response.Usage.CompletionTokens
 	}
