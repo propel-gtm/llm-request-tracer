@@ -34,7 +34,7 @@ func (t *Tracker) TrackRequest(ctx context.Context, opts RequestOptions, inputTo
 			Value: fmt.Sprintf("%v", value),
 		})
 	}
-	
+
 	request := &Request{
 		ID:           uuid.New().String(),
 		TraceID:      opts.TraceID,

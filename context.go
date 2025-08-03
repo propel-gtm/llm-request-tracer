@@ -51,11 +51,11 @@ func GetTraceIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return uuid.New().String()
 	}
-	
+
 	if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
 		return traceID
 	}
-	
+
 	return uuid.New().String()
 }
 
@@ -64,41 +64,41 @@ func GetUserIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	
+
 	if userID, ok := ctx.Value(userIDKey).(string); ok {
 		return userID
 	}
-	
+
 	return ""
 }
 
 // GetDimensionsFromContext extracts all tracking dimensions from context
 func GetDimensionsFromContext(ctx context.Context) map[string]interface{} {
 	dimensions := make(map[string]interface{})
-	
+
 	if ctx == nil {
 		return dimensions
 	}
-	
+
 	// Add explicit dimensions
 	if customDims, ok := ctx.Value(dimensionsKey).(map[string]interface{}); ok {
 		for k, v := range customDims {
 			dimensions[k] = v
 		}
 	}
-	
+
 	// Add individual context values
 	if userID := GetUserIDFromContext(ctx); userID != "" {
 		dimensions["user_id"] = userID
 	}
-	
+
 	if workflow, ok := ctx.Value(workflowKey).(string); ok && workflow != "" {
 		dimensions["workflow"] = workflow
 	}
-	
+
 	if feature, ok := ctx.Value(featureKey).(string); ok && feature != "" {
 		dimensions["feature"] = feature
 	}
-	
+
 	return dimensions
 }

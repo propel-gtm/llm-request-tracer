@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+	mistral "github.com/gage-technologies/mistral-go"
+	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
 )
@@ -24,6 +28,15 @@ func NewClient(storage StorageAdapter) *Client {
 
 // OpenAICreateChatCompletionFunc represents the signature of OpenAI's CreateChatCompletion method
 type OpenAICreateChatCompletionFunc func(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error)
+
+// AnthropicMessageNewFunc represents the signature of Anthropic's MessageService.New method
+type AnthropicMessageNewFunc func(ctx context.Context, body anthropic.MessageNewParams, opts ...option.RequestOption) (res *anthropic.Message, err error)
+
+// MistralChatFunc represents the signature of Mistral's Chat method
+type MistralChatFunc func(model string, messages []mistral.ChatMessage, params *mistral.ChatRequestParams) (*mistral.ChatCompletionResponse, error)
+
+// GoogleGenerateContentFunc represents the signature of Google's GenerativeModel.GenerateContent method
+type GoogleGenerateContentFunc func(ctx context.Context, parts ...genai.Part) (*genai.GenerateContentResponse, error)
 
 // TraceOpenAIRequest wraps OpenAI's CreateChatCompletion and automatically tracks token usage
 func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatCompletionRequest, createChatCompletion OpenAICreateChatCompletionFunc) (openai.ChatCompletionResponse, error) {
@@ -56,17 +69,99 @@ func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatComp
 	return response, err
 }
 
-// Placeholder methods for other providers - can be implemented later
-func (c *Client) CallAnthropic(model, systemMessage, userMessage string, trackingContext map[string]interface{}) (string, error) {
-	return "", fmt.Errorf("Anthropic integration not implemented yet")
+// TraceAnthropicRequest wraps Anthropic's MessageService.New and automatically tracks token usage
+func (c *Client) TraceAnthropicRequest(ctx context.Context, params anthropic.MessageNewParams, messageNew AnthropicMessageNewFunc) (*anthropic.Message, error) {
+	startTime := time.Now()
+
+	// Make the actual Anthropic API call using the provided function
+	response, err := messageNew(ctx, params)
+
+	duration := time.Since(startTime)
+
+	// Track the request - even if it failed
+	inputTokens := 0
+	outputTokens := 0
+	if err == nil {
+		inputTokens = int(response.Usage.InputTokens)
+		outputTokens = int(response.Usage.OutputTokens)
+	}
+
+	// Extract tracking context from context if available
+	trackingContext := GetDimensionsFromContext(ctx)
+
+	trackErr := c.trackRequest(ctx, ProviderAnthropic, string(params.Model),
+		inputTokens, outputTokens, duration, err, trackingContext)
+	if trackErr != nil {
+		// Log but don't fail the request
+		fmt.Printf("Failed to track request: %v\n", trackErr)
+	}
+
+	// Return the original response and error
+	return response, err
 }
 
-func (c *Client) CallMistral(model, systemMessage, userMessage string, trackingContext map[string]interface{}) (string, error) {
-	return "", fmt.Errorf("Mistral integration not implemented yet")
+// TraceMistralRequest wraps Mistral's Chat method and automatically tracks token usage
+func (c *Client) TraceMistralRequest(ctx context.Context, model string, messages []mistral.ChatMessage, params *mistral.ChatRequestParams, chat MistralChatFunc) (*mistral.ChatCompletionResponse, error) {
+	startTime := time.Now()
+
+	// Make the actual Mistral API call using the provided function
+	response, err := chat(model, messages, params)
+
+	duration := time.Since(startTime)
+
+	// Track the request - even if it failed
+	inputTokens := 0
+	outputTokens := 0
+	if err == nil {
+		inputTokens = response.Usage.PromptTokens
+		outputTokens = response.Usage.CompletionTokens
+	}
+
+	// Extract tracking context from context if available
+	trackingContext := GetDimensionsFromContext(ctx)
+
+	trackErr := c.trackRequest(ctx, ProviderMistral, model,
+		inputTokens, outputTokens, duration, err, trackingContext)
+	if trackErr != nil {
+		// Log but don't fail the request
+		fmt.Printf("Failed to track request: %v\n", trackErr)
+	}
+
+	// Return the original response and error
+	return response, err
 }
 
-func (c *Client) CallGoogle(model, systemMessage, userMessage string, trackingContext map[string]interface{}) (string, error) {
-	return "", fmt.Errorf("Google integration not implemented yet")
+// TraceGoogleRequest wraps Google's GenerativeModel.GenerateContent method and automatically tracks token usage
+func (c *Client) TraceGoogleRequest(ctx context.Context, parts []genai.Part, generateContent GoogleGenerateContentFunc) (*genai.GenerateContentResponse, error) {
+	startTime := time.Now()
+
+	// Make the actual Google API call using the provided function
+	response, err := generateContent(ctx, parts...)
+
+	duration := time.Since(startTime)
+
+	// Track the request - even if it failed
+	inputTokens := 0
+	outputTokens := 0
+	if err == nil && response.UsageMetadata != nil {
+		inputTokens = int(response.UsageMetadata.PromptTokenCount)
+		outputTokens = int(response.UsageMetadata.CandidatesTokenCount)
+	}
+
+	// Extract tracking context from context if available
+	trackingContext := GetDimensionsFromContext(ctx)
+
+	// Note: We can't easily get the model name from the response, so we'll use "google-model" as a placeholder
+	// Users should track the model name in their tracking context if needed
+	trackErr := c.trackRequest(ctx, ProviderGoogle, "google-model",
+		inputTokens, outputTokens, duration, err, trackingContext)
+	if trackErr != nil {
+		// Log but don't fail the request
+		fmt.Printf("Failed to track request: %v\n", trackErr)
+	}
+
+	// Return the original response and error
+	return response, err
 }
 
 // trackRequest internally tracks the token usage
