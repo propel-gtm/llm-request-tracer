@@ -174,7 +174,6 @@ func (a *GormAdapter) Aggregate(ctx context.Context, groupBy []string, filter *l
 	selectFields := []string{
 		"COUNT(*) as total_requests",
 		"SUM(input_tokens + output_tokens) as total_tokens",
-		"0 as total_cost",
 		"AVG(latency) as avg_latency",
 		"SUM(CASE WHEN error IS NOT NULL AND error != '' THEN 1 ELSE 0 END) as error_count",
 	}
@@ -202,7 +201,6 @@ func (a *GormAdapter) Aggregate(ctx context.Context, groupBy []string, filter *l
 		Model         string             `json:"model"`
 		TotalRequests int64              `json:"total_requests"`
 		TotalTokens   int64              `json:"total_tokens"`
-		TotalCost     float64            `json:"total_cost"`
 		AvgLatency    float64            `json:"avg_latency"`
 		ErrorCount    int64              `json:"error_count"`
 	}
@@ -219,7 +217,6 @@ func (a *GormAdapter) Aggregate(ctx context.Context, groupBy []string, filter *l
 			Model:         row.Model,
 			TotalRequests: row.TotalRequests,
 			TotalTokens:   row.TotalTokens,
-			TotalCost:     row.TotalCost,
 			AvgLatency:    time.Duration(int64(row.AvgLatency)),
 			ErrorCount:    row.ErrorCount,
 			Dimensions:    []llmtracer.DimensionTag{},

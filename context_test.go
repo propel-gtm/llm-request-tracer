@@ -18,16 +18,6 @@ func TestContextHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("WithNewTraceID", func(t *testing.T) {
-		ctx := context.Background()
-		ctx = WithNewTraceID(ctx)
-
-		traceID := GetTraceIDFromContext(ctx)
-		if traceID == "" {
-			t.Error("Expected non-empty trace ID")
-		}
-	})
-
 	t.Run("GetTraceIDFromContext with nil context", func(t *testing.T) {
 		traceID := GetTraceIDFromContext(nil)
 		if traceID == "" {
@@ -40,10 +30,10 @@ func TestContextHelpers(t *testing.T) {
 		userID := "user-456"
 
 		ctx = WithUserID(ctx, userID)
-		retrieved := GetUserIDFromContext(ctx)
+		dimensions := GetDimensionsFromContext(ctx)
 
-		if retrieved != userID {
-			t.Errorf("Expected user ID %s, got %s", userID, retrieved)
+		if dimensions["user_id"] != userID {
+			t.Errorf("Expected user ID %s, got %v", userID, dimensions["user_id"])
 		}
 	})
 

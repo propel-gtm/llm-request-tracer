@@ -21,11 +21,6 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 	return context.WithValue(ctx, traceIDKey, traceID)
 }
 
-// WithNewTraceID adds a new generated trace ID to the context
-func WithNewTraceID(ctx context.Context) context.Context {
-	return WithTraceID(ctx, uuid.New().String())
-}
-
 // WithUserID adds a user ID to the context
 func WithUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
@@ -59,19 +54,6 @@ func GetTraceIDFromContext(ctx context.Context) string {
 	return uuid.New().String()
 }
 
-// GetUserIDFromContext extracts user ID from context
-func GetUserIDFromContext(ctx context.Context) string {
-	if ctx == nil {
-		return ""
-	}
-
-	if userID, ok := ctx.Value(userIDKey).(string); ok {
-		return userID
-	}
-
-	return ""
-}
-
 // GetDimensionsFromContext extracts all tracking dimensions from context
 func GetDimensionsFromContext(ctx context.Context) map[string]interface{} {
 	dimensions := make(map[string]interface{})
@@ -88,7 +70,7 @@ func GetDimensionsFromContext(ctx context.Context) map[string]interface{} {
 	}
 
 	// Add individual context values
-	if userID := GetUserIDFromContext(ctx); userID != "" {
+	if userID, ok := ctx.Value(userIDKey).(string); ok && userID != "" {
 		dimensions["user_id"] = userID
 	}
 

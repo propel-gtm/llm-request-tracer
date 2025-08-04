@@ -1,34 +1,41 @@
 # LLM Request Tracer
 
-Simple Go library that wraps AI provider clients (OpenAI, Anthropic, Mistral, Google) and automatically tracks token usage in the background.
+Go library that wraps your existing AI provider client calls (OpenAI, Anthropic, Mistral, Google) with automatic token usage tracking.
 
 ## 🎯 Quick Start
 
 ```go
-// Setup once
+// Setup storage once
 db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
 storage, _ := adapters.NewGormAdapter(db)
-client := llmtracer.NewClient(storage)
+tracer := llmtracer.NewClient(storage)
 
-// Configure API keys
-client.SetOpenAIKey("your-key")
-client.SetAnthropicKey("your-key")
+// Create your AI clients as usual
+openaiClient := openai.NewClient("your-key")
 
-// Make calls - token tracking happens automatically!
-response, _ := client.CallOpenAI("gpt-4", "You are helpful.", "Hello!", nil)
-response, _ := client.CallAnthropic("claude-3-haiku", "You are helpful.", "Hi!", nil)
+// Wrap your existing calls with the tracer - that's it!
+ctx := llmtracer.WithUserID(context.Background(), "user-123")
+response, err := tracer.TraceOpenAIRequest(ctx, 
+    openai.ChatCompletionRequest{
+        Model: "gpt-4",
+        Messages: []openai.ChatCompletionMessage{
+            {Role: openai.ChatMessageRoleUser, Content: "Hello!"},
+        },
+    }, 
+    openaiClient.CreateChatCompletion,
+)
 
-// Get token stats
-stats, _ := client.GetTokenStats(context.Background(), nil)
+// Get token usage statistics
+stats, _ := tracer.GetTokenStats(context.Background(), nil)
 ```
 
 ## Features
 
-- **Simple unified interface**: Just `CallOpenAI`, `CallAnthropic`, `CallMistral`, `CallGoogle`
-- **Automatic token tracking**: No manual tracking needed
-- **Built-in clients**: Uses official SDKs under the hood
-- **Flexible storage**: SQLite, PostgreSQL, MySQL via GORM
-- **Optional tracking context**: Add user IDs, features, or any metadata
+- **Transparent tracking**: Wrap your existing AI client calls - no code rewrite needed
+- **Dependency injection**: Pass your client methods directly to the tracer
+- **Automatic token capture**: Token usage is extracted from provider responses
+- **Flexible storage**: SQLite, PostgreSQL, MySQL via GORM adapter
+- **Rich metadata**: Track user IDs, features, workflows, and custom dimensions via context
 
 ## Installation
 
@@ -38,14 +45,16 @@ go get github.com/propel-gtm/llm-request-tracer
 
 ## Usage
 
-### Basic Usage
+### Basic Setup
 
 ```go
 package main
 
 import (
+    "context"
     "log"
     
+    "github.com/sashabaranov/go-openai"
     "gorm.io/driver/sqlite"
     "gorm.io/gorm"
     
@@ -54,111 +63,187 @@ import (
 )
 
 func main() {
-    // Setup storage
+    // 1. Setup storage
     db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
     storage, _ := adapters.NewGormAdapter(db)
     
-    // Create client
-    client := llmtracer.NewClient(storage)
-    defer client.Close()
+    // 2. Create tracer
+    tracer := llmtracer.NewClient(storage)
+    defer tracer.Close()
     
-    // Configure providers
-    client.SetOpenAIKey("your-openai-key")
-    client.SetAnthropicKey("your-anthropic-key")
+    // 3. Create your AI client as usual
+    openaiClient := openai.NewClient("your-openai-key")
     
-    // Make calls
-    response, err := client.CallOpenAI(
-        "gpt-3.5-turbo",
-        "You are a helpful assistant.",
-        "What is the capital of France?",
-        nil, // optional tracking context
+    // 4. Use the tracer to wrap your calls
+    ctx := context.Background()
+    response, err := tracer.TraceOpenAIRequest(ctx,
+        openai.ChatCompletionRequest{
+            Model: "gpt-3.5-turbo",
+            Messages: []openai.ChatCompletionMessage{
+                {Role: openai.ChatMessageRoleSystem, Content: "You are helpful."},
+                {Role: openai.ChatMessageRoleUser, Content: "What is the capital of France?"},
+            },
+        },
+        openaiClient.CreateChatCompletion, // Pass your client's method
     )
     
     if err != nil {
         log.Fatal(err)
     }
     
-    fmt.Println(response)
+    // Use response as normal
+    fmt.Println(response.Choices[0].Message.Content)
 }
 ```
 
-### With Tracking Context
+### Adding Tracking Metadata
+
+Use context helpers to add metadata for better analytics:
 
 ```go
-// Add metadata for better tracking
-response, err := client.CallOpenAI(
-    "gpt-4",
-    systemMessage,
-    userMessage,
-    map[string]interface{}{
-        "user_id": "user-123",
-        "feature": "chat",
-        "session": "sess-456",
+// Add user context
+ctx := llmtracer.WithUserID(context.Background(), "user-123")
+ctx = llmtracer.WithFeature(ctx, "chat-support")
+ctx = llmtracer.WithWorkflow(ctx, "customer-service")
+
+// Add custom dimensions
+ctx = llmtracer.WithDimensions(ctx, map[string]interface{}{
+    "team": "support",
+    "tier": "premium",
+    "session_id": "sess-456",
+})
+
+// Make the tracked call
+response, _ := tracer.TraceOpenAIRequest(ctx, request, client.CreateChatCompletion)
+```
+
+### Anthropic Example
+
+```go
+import "github.com/anthropics/anthropic-sdk-go"
+
+// Create Anthropic client
+anthropicClient := anthropic.NewClient()
+
+// Wrap calls with tracer
+ctx := llmtracer.WithUserID(context.Background(), "user-123")
+response, err := tracer.TraceAnthropicRequest(ctx,
+    anthropic.MessageNewParams{
+        Model: anthropic.ModelClaude3_5SonnetLatest,
+        MaxTokens: 1000,
+        Messages: []anthropic.MessageParam{
+            anthropic.NewUserMessage(
+                anthropic.NewTextBlock("Write a haiku about coding"),
+            ),
+        },
     },
+    anthropicClient.Messages.New, // Pass the client method
 )
 ```
 
-### Integration with Existing Code
+### Mistral Example
 
 ```go
-type YourService struct {
-    aiClient *llmtracer.Client
-}
+import mistral "github.com/gage-technologies/mistral-go"
 
-func (s *YourService) ProcessUserRequest(userID, message string) (string, error) {
-    // Your existing logic...
-    
-    // Just replace your OpenAI call with this:
-    return s.aiClient.CallOpenAI(
-        "gpt-4",
-        "You are a helpful assistant.",
-        message,
-        map[string]interface{}{"user_id": userID},
-    )
-}
+// Create Mistral client
+mistralClient := mistral.NewMistralClientDefault("your-key")
+
+// Wrap calls with tracer
+response, err := tracer.TraceMistralRequest(ctx,
+    mistral.ModelMistralLargeLatest,
+    []mistral.ChatMessage{
+        {Role: mistral.RoleUser, Content: "Hello!"},
+    },
+    &mistral.ChatRequestParams{MaxTokens: 1000},
+    mistralClient.Chat, // Pass the client method
+)
 ```
 
-## Supported Providers
+### Google Generative AI Example
 
-- **OpenAI**: GPT-4, GPT-3.5-turbo, etc.
-- **Anthropic**: Claude 3 Opus, Sonnet, Haiku
-- **Mistral**: Mistral Large, Medium, Small
-- **Google**: Gemini Pro, Gemini Pro Vision
+```go
+import "github.com/google/generative-ai-go/genai"
+
+// Create Google client
+googleClient, _ := genai.NewClient(context.Background())
+googleModel := googleClient.GenerativeModel("gemini-1.5-flash")
+
+// Wrap calls with tracer
+ctx := llmtracer.WithDimensions(context.Background(), map[string]interface{}{
+    "model": "gemini-1.5-flash", // Track model name since it's not in response
+})
+response, err := tracer.TraceGoogleRequest(ctx,
+    []genai.Part{genai.Text("Write a poem about AI")},
+    googleModel.GenerateContent, // Pass the model method
+)
+```
 
 ## Token Statistics
 
+Get aggregated token usage statistics:
+
 ```go
-// Get usage stats
-stats, err := client.GetTokenStats(context.Background(), nil)
+// Get all-time stats
+stats, err := tracer.GetTokenStats(context.Background(), nil)
 
 // Get stats since a specific time
 since := time.Now().Add(-24 * time.Hour)
-stats, err := client.GetTokenStats(context.Background(), &since)
+stats, err := tracer.GetTokenStats(context.Background(), &since)
 
-// Stats include:
-// - Total requests per model
-// - Input/output/total tokens
-// - Error counts
+// Stats include per model:
+// - Total requests
+// - Input tokens
+// - Output tokens  
+// - Total tokens
+// - Error count
+for model, stat := range stats {
+    fmt.Printf("%s: %d requests, %d total tokens\n", 
+        model, stat.TotalRequests, stat.InputTokens + stat.OutputTokens)
+}
 ```
 
 ## Storage Adapters
 
-The library uses GORM for storage, supporting:
-
-- SQLite (great for development/small apps)
-- PostgreSQL (recommended for production)
-- MySQL/MariaDB
+The library uses GORM for flexible storage options:
 
 ```go
-// SQLite
+// SQLite (great for development)
+import "gorm.io/driver/sqlite"
 db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
 
-// PostgreSQL
+// PostgreSQL (recommended for production)
+import "gorm.io/driver/postgres"
 db, _ := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 
 // MySQL
+import "gorm.io/driver/mysql"
 db, _ := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+
+// Create adapter
+storage, _ := adapters.NewGormAdapter(db)
 ```
+
+## Integration with Existing Code
+
+The library is designed to wrap your existing AI client calls with minimal changes:
+
+```go
+// BEFORE: Direct OpenAI call
+response, err := openaiClient.CreateChatCompletion(ctx, request)
+
+// AFTER: Wrapped with tracking
+response, err := tracer.TraceOpenAIRequest(ctx, request, openaiClient.CreateChatCompletion)
+```
+
+That's it! Your existing error handling, response processing, and business logic remain unchanged.
+
+## Supported Providers
+
+- **OpenAI**: All chat completion models (GPT-4, GPT-3.5-turbo, etc.)
+- **Anthropic**: Claude 3 models (Opus, Sonnet, Haiku)
+- **Mistral**: All Mistral models (Large, Medium, Small)
+- **Google**: Gemini models (Pro, Flash, etc.)
 
 ## Testing
 
@@ -172,9 +257,19 @@ go test -v ./...
 # Run with race detector
 go test -race ./...
 
-# Run specific tests
-go test -v -run TestClient ./...
+# Run with coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
 ```
+
+## Design Philosophy
+
+This library follows a simple principle: **wrap, don't replace**. You keep using your existing AI client libraries and simply wrap the calls with our tracer. This means:
+
+- No vendor lock-in
+- Easy to add or remove
+- Your existing code patterns remain unchanged
+- Full access to provider-specific features
 
 ## License
 

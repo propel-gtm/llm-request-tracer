@@ -10,10 +10,7 @@ const (
 	ProviderOpenAI    Provider = "openai"
 	ProviderAnthropic Provider = "anthropic"
 	ProviderGoogle    Provider = "google"
-	ProviderAWS       Provider = "aws"
-	ProviderTogether  Provider = "together"
 	ProviderMistral   Provider = "mistral"
-	ProviderCustom    Provider = "custom"
 )
 
 type Request struct {
@@ -54,7 +51,6 @@ type AggregateResult struct {
 	Model         string         `json:"model"`
 	TotalRequests int64          `json:"total_requests"`
 	TotalTokens   int64          `json:"total_tokens"`
-	TotalCost     float64        `json:"total_cost"`
 	AvgLatency    time.Duration  `json:"avg_latency"`
 	ErrorCount    int64          `json:"error_count"`
 	Dimensions    []DimensionTag `json:"dimensions"`

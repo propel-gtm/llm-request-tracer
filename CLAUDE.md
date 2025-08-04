@@ -46,10 +46,10 @@ This library provides a simple wrapper around AI provider clients with automatic
 ### Core Design
 
 1. **Unified Client** (`client.go`)
-   - Single `Client` type with simple methods: `CallOpenAI`, `CallAnthropic`, `CallMistral`, `CallGoogle`
-   - Each method takes: model, system message, user message, optional tracking context
+   - Single `Client` type with trace methods: `TraceOpenAIRequest`, `TraceAnthropicRequest`, `TraceMistralRequest`, `TraceGoogleRequest`
+   - Each method wraps your existing AI client calls with automatic token tracking
+   - Uses dependency injection pattern - you pass your client's method to the tracer
    - Automatic token tracking happens transparently in the background
-   - Uses official SDKs internally (anthropic-sdk-go, go-openai, mistral-go, generative-ai-go)
 
 2. **Storage Layer** (`storage.go`, `adapters/`)
    - `StorageAdapter` interface for pluggable backends
@@ -59,29 +59,41 @@ This library provides a simple wrapper around AI provider clients with automatic
 3. **Data Model** (`types.go`)
    - `Request` struct stores all tracking data
    - No cost calculation - pure token counting
-   - Flexible dimensions map for custom metadata
+   - Flexible dimensions via `DimensionTag` for custom metadata
+   - Supports providers: OpenAI, Anthropic, Google, Mistral
 
 ### Key Design Principles
 
-- **Hidden complexity**: Tracking logic is completely hidden from users
-- **Simple interface**: Just call methods like `CallOpenAI()` - no manual tracking
-- **Zero configuration**: Works out of the box, just set API keys
-- **Flexible metadata**: Optional tracking context for user IDs, features, etc.
+- **Dependency Injection**: Pass your AI client methods directly to the tracer
+- **Transparent Tracking**: Token usage is automatically captured from responses
+- **Context-based Metadata**: Use context to add user IDs, features, and custom dimensions
+- **Flexible Storage**: Pluggable storage backend via `StorageAdapter` interface
 
 ### Usage Pattern
 
 ```go
 // Setup once
+db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
+storage, _ := adapters.NewGormAdapter(db)
 client := llmtracer.NewClient(storage)
-client.SetOpenAIKey("key")
 
-// Use anywhere - tracking is automatic
-response, err := client.CallOpenAI("gpt-4", system, user, context)
+// Create your AI clients
+openaiClient := openai.NewClient("your-key")
+
+// Use anywhere - wrap your client calls with the tracer
+ctx := llmtracer.WithUserID(context.Background(), "user-123")
+response, err := client.TraceOpenAIRequest(ctx, openai.ChatCompletionRequest{
+    Model: "gpt-4",
+    Messages: []openai.ChatCompletionMessage{
+        {Role: openai.ChatMessageRoleUser, Content: "Hello"},
+    },
+}, openaiClient.CreateChatCompletion)
 ```
 
 ### Important Notes
 
-- The user wants a simple interface that hides all tracking complexity
-- No cost calculation needed - just token counting
-- Methods should mirror calling the underlying AI clients directly
+- Tracking is transparent - just wrap your existing AI client calls
+- No cost calculation - pure token counting only
+- Context helpers available for adding metadata: `WithUserID`, `WithFeature`, `WithWorkflow`, `WithDimensions`
 - Tracking context is optional but useful for analytics
+- All providers use the same pattern: pass your request and client method to the tracer
