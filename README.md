@@ -52,6 +52,7 @@ package main
 
 import (
     "context"
+    "fmt"
     "log"
     
     "github.com/sashabaranov/go-openai"
@@ -92,7 +93,9 @@ func main() {
     }
     
     // Use response as normal
-    fmt.Println(response.Choices[0].Message.Content)
+    if len(response.Choices) > 0 {
+        fmt.Println(response.Choices[0].Message.Content)
+    }
 }
 ```
 
@@ -184,10 +187,12 @@ response, err := tracer.TraceGoogleRequest(ctx,
 Get aggregated token usage statistics:
 
 ```go
+import "time"
+
 // Get all-time stats
 stats, err := tracer.GetTokenStats(context.Background(), nil)
 
-// Get stats since a specific time
+// Get stats since a specific time  
 since := time.Now().Add(-24 * time.Hour)
 stats, err := tracer.GetTokenStats(context.Background(), &since)
 
