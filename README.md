@@ -38,6 +38,8 @@ stats, _ := tracer.GetTokenStats(context.Background(), nil)
 - **Rich metadata**: Track user IDs, features, workflows, and custom dimensions via context
 - **Structured logging**: Built-in logging with uber/zap for tracking errors and debugging
 - **Async tracking option**: Optional asynchronous tracking to minimize latency impact
+- **Circuit breaker**: Protects against storage failures to ensure AI requests continue working
+- **Error categorization**: Automatically categorizes errors (rate limit, auth, network, etc.)
 
 ## Installation
 
@@ -286,6 +288,57 @@ With async tracking:
 - Development/testing where you want to ensure tracking completes
 - When you need immediate feedback on tracking errors
 - Low-traffic applications where latency isn't critical
+
+## Circuit Breaker
+
+The circuit breaker pattern protects your AI requests from storage failures:
+
+```go
+// Enable circuit breaker: opens after 3 failures, resets after 30 seconds
+tracer := llmtracer.NewClient(storage, 
+    llmtracer.WithCircuitBreaker(3, 30*time.Second),
+    llmtracer.WithLogger(logger), // To see circuit breaker state changes
+)
+```
+
+How it works:
+- **Closed state**: Normal operation, all tracking requests go to storage
+- **Open state**: After max failures, tracking is skipped to protect AI requests
+- **Half-open state**: After reset timeout, tests if storage has recovered
+
+Benefits:
+- AI requests continue working even if tracking storage is down
+- Automatic recovery when storage comes back online
+- Prevents cascading failures in your system
+
+## Error Categorization
+
+Errors are automatically categorized for better insights:
+
+```go
+// Errors are categorized into types:
+// - ErrorTypeRateLimit: Rate limiting errors (429, "rate limit exceeded")
+// - ErrorTypeAuthentication: Auth errors (401, 403, "unauthorized")
+// - ErrorTypeTimeout: Timeout errors ("deadline exceeded", "timeout")
+// - ErrorTypeNetwork: Network errors ("connection refused", "dns")
+// - ErrorTypeInvalidRequest: Bad requests (400, "invalid", "malformed")
+// - ErrorTypeServerError: Server errors (500-504, "internal error")
+// - ErrorTypeUnknown: Other errors
+
+// Query by error type
+requests, _ := storage.Query(ctx, &RequestFilter{
+    ErrorType: ErrorTypeRateLimit,
+    StartTime: &yesterday,
+})
+
+// Get error statistics
+stats, _ := tracer.GetTokenStats(ctx, nil)
+for model, stat := range stats {
+    if stat.ErrorCount > 0 {
+        fmt.Printf("%s had %d errors\n", model, stat.ErrorCount)
+    }
+}
+```
 
 ## Integration with Existing Code
 

@@ -2,6 +2,7 @@ package llmtracer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,9 +26,10 @@ type Logger interface {
 // Client provides a unified interface for calling different AI providers with automatic token tracking
 type Client struct {
 	// Internal tracking
-	storage       StorageAdapter
-	logger        Logger
-	asyncTracking bool
+	storage        StorageAdapter
+	logger         Logger
+	asyncTracking  bool
+	circuitBreaker *CircuitBreaker
 }
 
 // ClientOption allows configuring the Client
@@ -47,24 +49,31 @@ func WithAsyncTracking(async bool) ClientOption {
 	}
 }
 
+// WithCircuitBreaker enables circuit breaker pattern for storage operations
+func WithCircuitBreaker(maxFailures int, resetTimeout time.Duration) ClientOption {
+	return func(c *Client) {
+		c.circuitBreaker = NewCircuitBreaker(maxFailures, resetTimeout)
+	}
+}
+
 // NewClient creates a new AI client with token tracking
 func NewClient(storage StorageAdapter, opts ...ClientOption) *Client {
 	if storage == nil {
 		panic("storage adapter cannot be nil")
 	}
-	
+
 	client := &Client{
 		storage: storage,
 		logger:  zap.NewNop(), // Default to no-op logger
 	}
-	
+
 	// Apply options
 	for _, opt := range opts {
 		if opt != nil {
 			opt(client)
 		}
 	}
-	
+
 	return client
 }
 
@@ -85,7 +94,7 @@ func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatComp
 	if createChatCompletion == nil {
 		return openai.ChatCompletionResponse{}, fmt.Errorf("createChatCompletion function cannot be nil")
 	}
-	
+
 	startTime := time.Now()
 
 	// Make the actual OpenAI API call using the provided function
@@ -115,7 +124,7 @@ func (c *Client) TraceAnthropicRequest(ctx context.Context, params anthropic.Mes
 	if messageNew == nil {
 		return nil, fmt.Errorf("messageNew function cannot be nil")
 	}
-	
+
 	startTime := time.Now()
 
 	// Make the actual Anthropic API call using the provided function
@@ -148,7 +157,7 @@ func (c *Client) TraceMistralRequest(ctx context.Context, model string, messages
 	if model == "" {
 		return nil, fmt.Errorf("model cannot be empty")
 	}
-	
+
 	startTime := time.Now()
 
 	// Make the actual Mistral API call using the provided function
@@ -181,7 +190,7 @@ func (c *Client) TraceGoogleRequest(ctx context.Context, model string, parts []g
 	if model == "" {
 		return nil, fmt.Errorf("model cannot be empty")
 	}
-	
+
 	startTime := time.Now()
 
 	// Make the actual Google API call using the provided function
@@ -274,6 +283,18 @@ func (c *Client) trackRequest(ctx context.Context, provider Provider, model stri
 	if err != nil {
 		request.StatusCode = 500
 		request.Error = err.Error()
+	}
+
+	// Categorize the error if present
+	if request.Error != "" {
+		request.ErrorType = CategorizeError(errors.New(request.Error))
+	}
+
+	// Use circuit breaker if enabled
+	if c.circuitBreaker != nil {
+		return c.circuitBreaker.Call(func() error {
+			return c.storage.Save(ctx, request)
+		})
 	}
 
 	return c.storage.Save(ctx, request)

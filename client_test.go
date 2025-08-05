@@ -3,6 +3,8 @@ package llmtracer
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,17 +20,17 @@ import (
 
 // MockStorageAdapter implements StorageAdapter for testing
 type MockStorageAdapter struct {
-	SaveFunc           func(ctx context.Context, request *Request) error
-	GetFunc            func(ctx context.Context, id string) (*Request, error)
-	GetByTraceIDFunc   func(ctx context.Context, traceID string) ([]*Request, error)
-	QueryFunc          func(ctx context.Context, filter *RequestFilter) ([]*Request, error)
-	AggregateFunc      func(ctx context.Context, groupBy []string, filter *RequestFilter) ([]*AggregateResult, error)
-	DeleteFunc         func(ctx context.Context, id string) error
+	SaveFunc            func(ctx context.Context, request *Request) error
+	GetFunc             func(ctx context.Context, id string) (*Request, error)
+	GetByTraceIDFunc    func(ctx context.Context, traceID string) ([]*Request, error)
+	QueryFunc           func(ctx context.Context, filter *RequestFilter) ([]*Request, error)
+	AggregateFunc       func(ctx context.Context, groupBy []string, filter *RequestFilter) ([]*AggregateResult, error)
+	DeleteFunc          func(ctx context.Context, id string) error
 	DeleteOlderThanFunc func(ctx context.Context, before time.Time) (int64, error)
-	CloseFunc          func() error
+	CloseFunc           func() error
 
 	// Track calls for assertions
-	SaveCalls []SaveCall
+	SaveCalls  []SaveCall
 	QueryCalls []QueryCall
 }
 
@@ -133,7 +135,7 @@ func (m *MockLogger) Debug(msg string, fields ...zap.Field) {
 func TestNewClient(t *testing.T) {
 	storage := &MockStorageAdapter{}
 	client := NewClient(storage)
-	
+
 	assert.NotNil(t, client)
 	assert.Equal(t, storage, client.storage)
 	assert.NotNil(t, client.logger) // Should have default no-op logger
@@ -144,7 +146,7 @@ func TestNewClientWithLogger(t *testing.T) {
 	storage := &MockStorageAdapter{}
 	logger := &MockLogger{}
 	client := NewClient(storage, WithLogger(logger))
-	
+
 	assert.NotNil(t, client)
 	assert.Equal(t, storage, client.storage)
 	assert.Equal(t, logger, client.logger)
@@ -155,7 +157,7 @@ func TestNewClientWithLogger(t *testing.T) {
 func TestNewClientWithAsyncTracking(t *testing.T) {
 	storage := &MockStorageAdapter{}
 	client := NewClient(storage, WithAsyncTracking(true))
-	
+
 	assert.NotNil(t, client)
 	assert.Equal(t, storage, client.storage)
 	assert.True(t, client.asyncTracking)
@@ -166,23 +168,32 @@ func TestNewClientWithMultipleOptions(t *testing.T) {
 	storage := &MockStorageAdapter{}
 	logger := &MockLogger{}
 	client := NewClient(storage, WithLogger(logger), WithAsyncTracking(true))
-	
+
 	assert.NotNil(t, client)
 	assert.Equal(t, storage, client.storage)
 	assert.Equal(t, logger, client.logger)
 	assert.True(t, client.asyncTracking)
 }
 
+// Test NewClient with circuit breaker
+func TestNewClientWithCircuitBreaker(t *testing.T) {
+	storage := &MockStorageAdapter{}
+	client := NewClient(storage, WithCircuitBreaker(3, 100*time.Millisecond))
+
+	assert.NotNil(t, client)
+	assert.NotNil(t, client.circuitBreaker)
+}
+
 // Test TraceOpenAIRequest
 func TestTraceOpenAIRequest(t *testing.T) {
 	tests := []struct {
-		name           string
-		request        openai.ChatCompletionRequest
-		response       openai.ChatCompletionResponse
-		responseErr    error
-		saveErr        error
-		expectedSave   bool
-		checkRequest   func(t *testing.T, req *Request)
+		name         string
+		request      openai.ChatCompletionRequest
+		response     openai.ChatCompletionResponse
+		responseErr  error
+		saveErr      error
+		expectedSave bool
+		checkRequest func(t *testing.T, req *Request)
 	}{
 		{
 			name: "successful request with tracking",
@@ -332,7 +343,7 @@ func TestTraceOpenAIRequest(t *testing.T) {
 			// Verify tracking was attempted
 			if tt.expectedSave {
 				assert.Len(t, mockStorage.SaveCalls, 1)
-				
+
 				if tt.checkRequest != nil && len(mockStorage.SaveCalls) > 0 {
 					tt.checkRequest(t, mockStorage.SaveCalls[0].Request)
 				}
@@ -342,11 +353,11 @@ func TestTraceOpenAIRequest(t *testing.T) {
 			if tt.name == "tracking failure is logged" && mockLogger != nil {
 				assert.Len(t, mockLogger.ErrorCalls, 1)
 				assert.Equal(t, "Failed to track request", mockLogger.ErrorCalls[0].Message)
-				
+
 				// Verify error fields contain expected information
 				fields := mockLogger.ErrorCalls[0].Fields
 				assert.True(t, len(fields) > 0)
-				
+
 				// Check that error field is present
 				var hasError bool
 				for _, field := range fields {
@@ -365,7 +376,7 @@ func TestTraceOpenAIRequest(t *testing.T) {
 func TestAsyncTracking(t *testing.T) {
 	// Channel to detect when async operation completes
 	saveDone := make(chan bool, 1)
-	
+
 	mockStorage := &MockStorageAdapter{
 		SaveFunc: func(ctx context.Context, request *Request) error {
 			saveDone <- true // Signal that save was called
@@ -464,7 +475,7 @@ func TestSyncVsAsyncTracking(t *testing.T) {
 			if tt.asyncTracking {
 				// Async should return quickly
 				assert.Less(t, duration, tt.maxDuration, "Async tracking should not block API response")
-				
+
 				// Wait a bit for async operation to complete, then verify it happened
 				time.Sleep(100 * time.Millisecond)
 			} else {
@@ -516,7 +527,7 @@ func TestTraceAnthropicRequest(t *testing.T) {
 	// Verify tracking
 	require.Len(t, mockStorage.SaveCalls, 1)
 	savedRequest := mockStorage.SaveCalls[0].Request
-	
+
 	assert.Equal(t, ProviderAnthropic, savedRequest.Provider)
 	assert.Equal(t, string(anthropic.ModelClaude3_5SonnetLatest), savedRequest.Model)
 	assert.Equal(t, 10, savedRequest.InputTokens)
@@ -573,7 +584,7 @@ func TestTraceMistralRequest(t *testing.T) {
 	// Verify tracking
 	require.Len(t, mockStorage.SaveCalls, 1)
 	savedRequest := mockStorage.SaveCalls[0].Request
-	
+
 	assert.Equal(t, ProviderMistral, savedRequest.Provider)
 	assert.Equal(t, model, savedRequest.Model)
 	assert.Equal(t, 15, savedRequest.InputTokens)
@@ -621,7 +632,7 @@ func TestTraceGoogleRequest(t *testing.T) {
 	// Verify tracking
 	require.Len(t, mockStorage.SaveCalls, 1)
 	savedRequest := mockStorage.SaveCalls[0].Request
-	
+
 	assert.Equal(t, ProviderGoogle, savedRequest.Provider)
 	assert.Equal(t, "gemini-pro", savedRequest.Model) // Now uses the actual model parameter
 	assert.Equal(t, 5, savedRequest.InputTokens)
@@ -632,10 +643,10 @@ func TestTraceGoogleRequest(t *testing.T) {
 // Test GetTokenStats
 func TestGetTokenStats(t *testing.T) {
 	tests := []struct {
-		name           string
-		since          *time.Time
-		mockRequests   []*Request
-		expectedStats  map[string]*TokenStats
+		name          string
+		since         *time.Time
+		mockRequests  []*Request
+		expectedStats map[string]*TokenStats
 	}{
 		{
 			name:  "all time stats",
@@ -809,6 +820,152 @@ func TestCloseError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to close connection")
 }
 
+// Test circuit breaker integration
+func TestCircuitBreakerIntegration(t *testing.T) {
+	t.Run("circuit breaker opens after storage failures", func(t *testing.T) {
+		failCount := 0
+		storage := &MockStorageAdapter{
+			SaveFunc: func(ctx context.Context, request *Request) error {
+				failCount++
+				return errors.New("storage error")
+			},
+		}
+
+		// Circuit breaker with max 2 failures
+		client := NewClient(storage, WithCircuitBreaker(2, 50*time.Millisecond))
+
+		request := openai.ChatCompletionRequest{Model: "gpt-3.5-turbo"}
+		mockFunc := func(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+			return openai.ChatCompletionResponse{}, nil
+		}
+
+		// First two calls should fail normally
+		for i := 0; i < 2; i++ {
+			_, err := client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+			assert.NoError(t, err) // API call succeeds, only tracking fails
+		}
+		assert.Equal(t, 2, failCount)
+
+		// Circuit should be open now - next call should fail fast
+		_, err := client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+		assert.NoError(t, err)        // API call still succeeds
+		assert.Equal(t, 2, failCount) // Storage not called due to circuit breaker
+
+		// Wait for circuit to reset
+		time.Sleep(60 * time.Millisecond)
+
+		// Update storage to succeed
+		storage.SaveFunc = func(ctx context.Context, request *Request) error {
+			return nil
+		}
+
+		// Should try again
+		_, err = client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+		assert.NoError(t, err)
+	})
+
+	t.Run("circuit breaker logs when open", func(t *testing.T) {
+		storage := &MockStorageAdapter{
+			SaveFunc: func(ctx context.Context, request *Request) error {
+				return errors.New("storage error")
+			},
+		}
+
+		logger := &MockLogger{}
+		client := NewClient(storage, WithLogger(logger), WithCircuitBreaker(1, 100*time.Millisecond))
+
+		request := openai.ChatCompletionRequest{Model: "gpt-3.5-turbo"}
+		mockFunc := func(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+			return openai.ChatCompletionResponse{}, nil
+		}
+
+		// First call opens the circuit
+		client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+
+		// Second call should log circuit open error
+		client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+
+		// Should have logged the circuit open error
+		assert.True(t, len(logger.ErrorCalls) >= 1)
+		foundCircuitOpen := false
+		for _, call := range logger.ErrorCalls {
+			// Check if the error message mentions circuit breaker
+			if strings.Contains(call.Message, "Failed to track request") {
+				for _, field := range call.Fields {
+					// Convert field to string and check for circuit breaker error
+					fieldStr := fmt.Sprintf("%v", field)
+					if strings.Contains(fieldStr, "circuit breaker is open") {
+						foundCircuitOpen = true
+						break
+					}
+				}
+			}
+		}
+		assert.True(t, foundCircuitOpen, "Expected to find circuit breaker open error in logs")
+	})
+}
+
+// Test error categorization
+func TestErrorCategorization(t *testing.T) {
+	tests := []struct {
+		name              string
+		apiError          error
+		expectedErrorType ErrorType
+	}{
+		{
+			name:              "rate limit error",
+			apiError:          errors.New("error: rate limit exceeded"),
+			expectedErrorType: ErrorTypeRateLimit,
+		},
+		{
+			name:              "authentication error",
+			apiError:          errors.New("401 Unauthorized: Invalid API key"),
+			expectedErrorType: ErrorTypeAuthentication,
+		},
+		{
+			name:              "timeout error",
+			apiError:          errors.New("context deadline exceeded"),
+			expectedErrorType: ErrorTypeTimeout,
+		},
+		{
+			name:              "network error",
+			apiError:          errors.New("dial tcp: connection refused"),
+			expectedErrorType: ErrorTypeNetwork,
+		},
+		{
+			name:              "server error",
+			apiError:          errors.New("500 Internal Server Error"),
+			expectedErrorType: ErrorTypeServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var savedRequest *Request
+			storage := &MockStorageAdapter{
+				SaveFunc: func(ctx context.Context, request *Request) error {
+					savedRequest = request
+					return nil
+				},
+			}
+
+			client := NewClient(storage)
+
+			request := openai.ChatCompletionRequest{Model: "gpt-3.5-turbo"}
+			mockFunc := func(ctx context.Context, request openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+				return openai.ChatCompletionResponse{}, tt.apiError
+			}
+
+			_, err := client.TraceOpenAIRequest(context.Background(), request, mockFunc)
+			assert.Equal(t, tt.apiError, err)
+
+			require.NotNil(t, savedRequest)
+			assert.Equal(t, tt.expectedErrorType, savedRequest.ErrorType)
+			assert.Equal(t, tt.apiError.Error(), savedRequest.Error)
+		})
+	}
+}
+
 // Test validation
 func TestValidation(t *testing.T) {
 	t.Run("NewClient with nil storage panics", func(t *testing.T) {
@@ -913,7 +1070,7 @@ func TestValidation(t *testing.T) {
 
 		assert.NoError(t, err)
 		require.Len(t, storage.SaveCalls, 1)
-		
+
 		request := storage.SaveCalls[0].Request
 		assert.Equal(t, 0, request.InputTokens)  // Should be normalized to 0
 		assert.Equal(t, 0, request.OutputTokens) // Should be normalized to 0

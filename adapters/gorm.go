@@ -89,6 +89,10 @@ func (a *GormAdapter) Query(ctx context.Context, filter *llmtracer.RequestFilter
 		query = query.Where("model = ?", filter.Model)
 	}
 
+	if filter.ErrorType != "" {
+		query = query.Where("error_type = ?", filter.ErrorType)
+	}
+
 	if filter.StartTime != nil {
 		query = query.Where("requested_at >= ?", *filter.StartTime)
 	}
