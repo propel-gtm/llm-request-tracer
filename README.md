@@ -36,6 +36,8 @@ stats, _ := tracer.GetTokenStats(context.Background(), nil)
 - **Automatic token capture**: Token usage is extracted from provider responses
 - **Flexible storage**: SQLite, PostgreSQL, MySQL via GORM adapter
 - **Rich metadata**: Track user IDs, features, workflows, and custom dimensions via context
+- **Structured logging**: Built-in logging with uber/zap for tracking errors and debugging
+- **Async tracking option**: Optional asynchronous tracking to minimize latency impact
 
 ## Installation
 
@@ -58,6 +60,7 @@ import (
     "github.com/sashabaranov/go-openai"
     "gorm.io/driver/sqlite"
     "gorm.io/gorm"
+    "go.uber.org/zap"
     
     llmtracer "github.com/propel-gtm/llm-request-tracer"
     "github.com/propel-gtm/llm-request-tracer/adapters"
@@ -68,8 +71,12 @@ func main() {
     db, _ := gorm.Open(sqlite.Open("tokens.db"), &gorm.Config{})
     storage, _ := adapters.NewGormAdapter(db)
     
-    // 2. Create tracer
-    tracer := llmtracer.NewClient(storage)
+    // 2. Create tracer with options
+    logger, _ := zap.NewProduction()
+    tracer := llmtracer.NewClient(storage, 
+        llmtracer.WithLogger(logger),
+        llmtracer.WithAsyncTracking(true), // Reduce latency impact
+    )
     defer tracer.Close()
     
     // 3. Create your AI client as usual
@@ -172,11 +179,9 @@ import "github.com/google/generative-ai-go/genai"
 googleClient, _ := genai.NewClient(context.Background())
 googleModel := googleClient.GenerativeModel("gemini-1.5-flash")
 
-// Wrap calls with tracer
-ctx := llmtracer.WithDimensions(context.Background(), map[string]interface{}{
-    "model": "gemini-1.5-flash", // Track model name since it's not in response
-})
-response, err := tracer.TraceGoogleRequest(ctx,
+// Wrap calls with tracer - model name is now a parameter
+response, err := tracer.TraceGoogleRequest(context.Background(),
+    "gemini-1.5-flash", // Model name as parameter
     []genai.Part{genai.Text("Write a poem about AI")},
     googleModel.GenerateContent, // Pass the model method
 )
@@ -228,6 +233,59 @@ db, _ := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 // Create adapter
 storage, _ := adapters.NewGormAdapter(db)
 ```
+
+## Logging Configuration
+
+The library uses structured logging with uber/zap. Configure logging to capture tracking errors:
+
+```go
+// Development logger (pretty output)
+logger, _ := zap.NewDevelopment()
+tracer := llmtracer.NewClient(storage, llmtracer.WithLogger(logger))
+
+// Production logger (JSON output)
+logger, _ := zap.NewProduction()
+tracer := llmtracer.NewClient(storage, llmtracer.WithLogger(logger))
+
+// Custom logger configuration
+config := zap.NewProductionConfig()
+config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+logger, _ := config.Build()
+tracer := llmtracer.NewClient(storage, llmtracer.WithLogger(logger))
+
+// No logging (default)
+tracer := llmtracer.NewClient(storage) // Uses no-op logger
+```
+
+Tracking errors are logged but don't stop your AI requests from completing.
+
+## Async Tracking
+
+Enable asynchronous tracking to minimize latency impact on your AI requests:
+
+```go
+// Synchronous tracking (default) - waits for database writes
+tracer := llmtracer.NewClient(storage)
+
+// Asynchronous tracking - returns immediately, tracks in background
+tracer := llmtracer.NewClient(storage, llmtracer.WithAsyncTracking(true))
+```
+
+With async tracking:
+- AI requests return immediately without waiting for database writes
+- Token usage is tracked in background goroutines
+- Tracking errors are still logged (if logger is configured)
+- Minimal impact on response latency
+
+**When to use async tracking:**
+- High-throughput applications where latency is critical
+- When database writes are slow or unreliable
+- Production environments where response time matters
+
+**When to use sync tracking:**
+- Development/testing where you want to ensure tracking completes
+- When you need immediate feedback on tracking errors
+- Low-traffic applications where latency isn't critical
 
 ## Integration with Existing Code
 

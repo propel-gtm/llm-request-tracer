@@ -104,11 +104,8 @@ func main() {
 	// Example 4: Call Google Generative AI with automatic tracking
 	ctx = llmtracer.WithUserID(context.Background(), "user-123")
 	ctx = llmtracer.WithFeature(ctx, "creative-writing")
-	ctx = llmtracer.WithDimensions(ctx, map[string]interface{}{
-		"model": "gemini-1.5-flash", // Track model name in context since it's not in response
-	})
 
-	googleResponse, err := client.TraceGoogleRequest(ctx, []genai.Part{
+	googleResponse, err := client.TraceGoogleRequest(ctx, "gemini-1.5-flash", []genai.Part{
 		genai.Text("Write a short poem about artificial intelligence"),
 	}, googleModel.GenerateContent)
 	if err != nil {

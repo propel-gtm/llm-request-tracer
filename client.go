@@ -11,19 +11,61 @@ import (
 	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
+	"go.uber.org/zap"
 )
+
+// Logger interface for logging tracking errors
+type Logger interface {
+	Error(msg string, fields ...zap.Field)
+	Warn(msg string, fields ...zap.Field)
+	Info(msg string, fields ...zap.Field)
+	Debug(msg string, fields ...zap.Field)
+}
 
 // Client provides a unified interface for calling different AI providers with automatic token tracking
 type Client struct {
 	// Internal tracking
-	storage StorageAdapter
+	storage       StorageAdapter
+	logger        Logger
+	asyncTracking bool
+}
+
+// ClientOption allows configuring the Client
+type ClientOption func(*Client)
+
+// WithLogger sets a custom logger for the client
+func WithLogger(logger Logger) ClientOption {
+	return func(c *Client) {
+		c.logger = logger
+	}
+}
+
+// WithAsyncTracking enables asynchronous tracking to reduce latency
+func WithAsyncTracking(async bool) ClientOption {
+	return func(c *Client) {
+		c.asyncTracking = async
+	}
 }
 
 // NewClient creates a new AI client with token tracking
-func NewClient(storage StorageAdapter) *Client {
-	return &Client{
-		storage: storage,
+func NewClient(storage StorageAdapter, opts ...ClientOption) *Client {
+	if storage == nil {
+		panic("storage adapter cannot be nil")
 	}
+	
+	client := &Client{
+		storage: storage,
+		logger:  zap.NewNop(), // Default to no-op logger
+	}
+	
+	// Apply options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(client)
+		}
+	}
+	
+	return client
 }
 
 // OpenAICreateChatCompletionFunc represents the signature of OpenAI's CreateChatCompletion method
@@ -40,6 +82,10 @@ type GoogleGenerateContentFunc func(ctx context.Context, parts ...genai.Part) (*
 
 // TraceOpenAIRequest wraps OpenAI's CreateChatCompletion and automatically tracks token usage
 func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatCompletionRequest, createChatCompletion OpenAICreateChatCompletionFunc) (openai.ChatCompletionResponse, error) {
+	if createChatCompletion == nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("createChatCompletion function cannot be nil")
+	}
+	
 	startTime := time.Now()
 
 	// Make the actual OpenAI API call using the provided function
@@ -58,12 +104,7 @@ func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatComp
 	// Extract tracking context from context if available
 	trackingContext := GetDimensionsFromContext(ctx)
 
-	trackErr := c.trackRequest(ctx, ProviderOpenAI, request.Model,
-		inputTokens, outputTokens, duration, err, trackingContext)
-	if trackErr != nil {
-		// Log but don't fail the request
-		fmt.Printf("Failed to track request: %v\n", trackErr)
-	}
+	c.track(ctx, ProviderOpenAI, request.Model, inputTokens, outputTokens, duration, err, trackingContext)
 
 	// Return the original response and error
 	return response, err
@@ -71,6 +112,10 @@ func (c *Client) TraceOpenAIRequest(ctx context.Context, request openai.ChatComp
 
 // TraceAnthropicRequest wraps Anthropic's MessageService.New and automatically tracks token usage
 func (c *Client) TraceAnthropicRequest(ctx context.Context, params anthropic.MessageNewParams, messageNew AnthropicMessageNewFunc) (*anthropic.Message, error) {
+	if messageNew == nil {
+		return nil, fmt.Errorf("messageNew function cannot be nil")
+	}
+	
 	startTime := time.Now()
 
 	// Make the actual Anthropic API call using the provided function
@@ -89,12 +134,7 @@ func (c *Client) TraceAnthropicRequest(ctx context.Context, params anthropic.Mes
 	// Extract tracking context from context if available
 	trackingContext := GetDimensionsFromContext(ctx)
 
-	trackErr := c.trackRequest(ctx, ProviderAnthropic, string(params.Model),
-		inputTokens, outputTokens, duration, err, trackingContext)
-	if trackErr != nil {
-		// Log but don't fail the request
-		fmt.Printf("Failed to track request: %v\n", trackErr)
-	}
+	c.track(ctx, ProviderAnthropic, string(params.Model), inputTokens, outputTokens, duration, err, trackingContext)
 
 	// Return the original response and error
 	return response, err
@@ -102,6 +142,13 @@ func (c *Client) TraceAnthropicRequest(ctx context.Context, params anthropic.Mes
 
 // TraceMistralRequest wraps Mistral's Chat method and automatically tracks token usage
 func (c *Client) TraceMistralRequest(ctx context.Context, model string, messages []mistral.ChatMessage, params *mistral.ChatRequestParams, chat MistralChatFunc) (*mistral.ChatCompletionResponse, error) {
+	if chat == nil {
+		return nil, fmt.Errorf("chat function cannot be nil")
+	}
+	if model == "" {
+		return nil, fmt.Errorf("model cannot be empty")
+	}
+	
 	startTime := time.Now()
 
 	// Make the actual Mistral API call using the provided function
@@ -120,19 +167,21 @@ func (c *Client) TraceMistralRequest(ctx context.Context, model string, messages
 	// Extract tracking context from context if available
 	trackingContext := GetDimensionsFromContext(ctx)
 
-	trackErr := c.trackRequest(ctx, ProviderMistral, model,
-		inputTokens, outputTokens, duration, err, trackingContext)
-	if trackErr != nil {
-		// Log but don't fail the request
-		fmt.Printf("Failed to track request: %v\n", trackErr)
-	}
+	c.track(ctx, ProviderMistral, model, inputTokens, outputTokens, duration, err, trackingContext)
 
 	// Return the original response and error
 	return response, err
 }
 
 // TraceGoogleRequest wraps Google's GenerativeModel.GenerateContent method and automatically tracks token usage
-func (c *Client) TraceGoogleRequest(ctx context.Context, parts []genai.Part, generateContent GoogleGenerateContentFunc) (*genai.GenerateContentResponse, error) {
+func (c *Client) TraceGoogleRequest(ctx context.Context, model string, parts []genai.Part, generateContent GoogleGenerateContentFunc) (*genai.GenerateContentResponse, error) {
+	if generateContent == nil {
+		return nil, fmt.Errorf("generateContent function cannot be nil")
+	}
+	if model == "" {
+		return nil, fmt.Errorf("model cannot be empty")
+	}
+	
 	startTime := time.Now()
 
 	// Make the actual Google API call using the provided function
@@ -151,21 +200,52 @@ func (c *Client) TraceGoogleRequest(ctx context.Context, parts []genai.Part, gen
 	// Extract tracking context from context if available
 	trackingContext := GetDimensionsFromContext(ctx)
 
-	// Note: We can't easily get the model name from the response, so we'll use "google-model" as a placeholder
-	// Users should track the model name in their tracking context if needed
-	trackErr := c.trackRequest(ctx, ProviderGoogle, "google-model",
-		inputTokens, outputTokens, duration, err, trackingContext)
-	if trackErr != nil {
-		// Log but don't fail the request
-		fmt.Printf("Failed to track request: %v\n", trackErr)
-	}
+	c.track(ctx, ProviderGoogle, model, inputTokens, outputTokens, duration, err, trackingContext)
 
 	// Return the original response and error
 	return response, err
 }
 
+// track handles request tracking, either synchronously or asynchronously
+func (c *Client) track(ctx context.Context, provider Provider, model string, inputTokens, outputTokens int, duration time.Duration, apiErr error, trackingContext map[string]interface{}) {
+	if c.asyncTracking {
+		// Track asynchronously to avoid blocking the API response
+		go func() {
+			// Create a background context to avoid cancellation issues
+			bgCtx := context.Background()
+			c.doTrack(bgCtx, provider, model, inputTokens, outputTokens, duration, apiErr, trackingContext)
+		}()
+	} else {
+		// Track synchronously
+		c.doTrack(ctx, provider, model, inputTokens, outputTokens, duration, apiErr, trackingContext)
+	}
+}
+
+// doTrack handles the actual tracking with error logging
+func (c *Client) doTrack(ctx context.Context, provider Provider, model string, inputTokens, outputTokens int, duration time.Duration, apiErr error, trackingContext map[string]interface{}) {
+	trackErr := c.trackRequest(ctx, provider, model, inputTokens, outputTokens, duration, apiErr, trackingContext)
+	if trackErr != nil {
+		// Log but don't fail the request
+		providerStr := string(provider)
+		c.logger.Error("Failed to track request",
+			zap.Error(trackErr),
+			zap.String("provider", providerStr),
+			zap.String("model", model),
+			zap.Int("input_tokens", inputTokens),
+			zap.Int("output_tokens", outputTokens),
+		)
+	}
+}
+
 // trackRequest internally tracks the token usage
 func (c *Client) trackRequest(ctx context.Context, provider Provider, model string, inputTokens, outputTokens int, duration time.Duration, err error, trackingContext map[string]interface{}) error {
+	// Validate token counts
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
 	// Convert map dimensions to DimensionTag slice
 	var dimensions []DimensionTag
 	for key, value := range trackingContext {
